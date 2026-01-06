@@ -12,7 +12,7 @@ import os
 app = Flask(__name__)
 app.secret_key = "my_xdrip_secret_key_2026"  # Key for sessions
 
-DB_PATH = Path("/home/matteo/xdrip/xdrip.db")
+DB_PATH = Path("/home/user/xdrip/xdrip.db")
 SECRET = "mysecret"  # your secret in path: /xdrip/mysecret/...
 DASHBOARD_PASSWORD = "mypassword"  # Password to access dashboard
 
