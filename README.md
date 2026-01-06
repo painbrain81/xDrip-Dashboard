@@ -2,9 +2,13 @@
 
 Sistema di monitoraggio glicemia per xDrip+ con dashboard web interattiva e logging avanzato.
 
+![Screenshot](1.png)
+
+![Screenshot](2.png)
+
 ## 📋 Funzionalità
 
-### 🔄 Ricezione Dati xDrip
+### 🔄 Ricezione Dati xDrip (opzione "caricamento nel Cloud" -> "API Upload (REST)")
 - Endpoint REST API per ricevere dati glicemici da xDrip+
 - Salvataggio automatico nel database SQLite
 - Supporto entries (valori glicemia) e devicestatus (batteria)
@@ -273,3 +277,4 @@ Uso personale - Non per distribuzione commerciale
 
 **Versione**: 1.0  
 **Data**: Gennaio 2026
+
