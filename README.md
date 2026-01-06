@@ -6,6 +6,8 @@ Blood glucose monitoring system for xDrip+ with interactive web dashboard and ad
 
 ![Screenshot](2.png)
 
+![Screenshot](3.png)
+
 ## 📋 Features
 
 ### 🔄 xDrip Data Reception
@@ -404,3 +406,4 @@ Personal use - Not for commercial distribution
 
 **Version**: 2.0  
 **Date**: January 2026  
+
