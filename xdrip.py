@@ -12,15 +12,15 @@ import os
 app = Flask(__name__)
 app.secret_key = "my_xdrip_secret_key_2026"  # Key for sessions
 
-DB_PATH = Path("/home/user/xdrip/xdrip.db")
-SECRET = "mysecret"  # your secret in path: /xdrip/mysecret/...
-DASHBOARD_PASSWORD = "mypassword"  # Password to access dashboard
+DB_PATH = Path("/home/USER/xdrip/xdrip.db")
+SECRET = "MYSECRET"  # your secret in path: /xdrip/MYSECRET/...
+DASHBOARD_PASSWORD = "MYPASSWORD"  # Password to access dashboard
 
 # Log path configuration (customizable)
-LOGS_DIR = Path("/home/user/xdrip/logs")  # Logs folder path
+LOGS_DIR = Path("/home/USER/xdrip/logs")  # Logs folder path
 
 # Customizable title for dashboard
-DASHBOARD_TITLE = "dashboarde"
+DASHBOARD_TITLE = "MY DASHBOARD"
 
 # Target glucose limits for chart
 TARGET_MIN = 70  # Minimum target limit (mg/dL)
@@ -592,6 +592,17 @@ DASHBOARD_TEMPLATE = """
             cursor: pointer;
             background: white;
         }
+        .time-selector label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+        .time-selector input[type="checkbox"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+        }
         .display-btn {
             padding: 10px 20px;
             background: #667eea;
@@ -667,6 +678,12 @@ DASHBOARD_TEMPLATE = """
                     <option value="48">Last 48 hours</option>
                 </select>
             </div>
+            <div class="time-selector">
+                <label>
+                    <input type="checkbox" id="showSmoothed" onchange="toggleSmoothedLine()" checked>
+                    Show smoothed line
+                </label>
+            </div>
         </div>
         <div style="display: flex; gap: 10px;">
             <a href="/dashboard/display" class="display-btn">Large Display</a>
@@ -704,12 +721,47 @@ DASHBOARD_TEMPLATE = """
         const TARGET_MAX = {{ target_max }};
         let chart = null;
         let currentHours = 4;
+        let showSmoothed = true;
+        
+        // Function to calculate smoothed line using moving average
+        function calculateSmoothedLine(values) {
+            const windowSize = 5; // Window size for moving average
+            const smoothedValues = [];
+            
+            for (let i = 0; i < values.length; i++) {
+                let sum = 0;
+                let count = 0;
+                
+                // Calculate window boundaries
+                const start = Math.max(0, i - Math.floor(windowSize / 2));
+                const end = Math.min(values.length, i + Math.ceil(windowSize / 2));
+                
+                // Sum values in the window
+                for (let j = start; j < end; j++) {
+                    sum += values[j];
+                    count++;
+                }
+                
+                // Calculate average
+                smoothedValues.push(sum / count);
+            }
+            
+            return smoothedValues;
+        }
         
         function changeTimeRange() {
             currentHours = parseInt(document.getElementById('timeRange').value);
             // Also update average label
             document.getElementById('avg-label').textContent = `${currentHours}-Hour Average`;
             loadData();
+        }
+        
+        function toggleSmoothedLine() {
+            showSmoothed = document.getElementById('showSmoothed').checked;
+            if (chart) {
+                chart.data.datasets[1].hidden = !showSmoothed;
+                chart.update();
+            }
         }
         
         // Custom plugin to draw target range band
@@ -859,6 +911,9 @@ DASHBOARD_TEMPLATE = """
                     (v >= TARGET_MIN && v <= TARGET_MAX) ? '#10b981' : '#f97316'
                 );
                 
+                // Calculate smoothed line using moving average
+                const smoothedValues = calculateSmoothedLine(values);
+                
                 // Create or update chart
                 const ctx = document.getElementById('glucoseChart').getContext('2d');
                 
@@ -883,6 +938,18 @@ DASHBOARD_TEMPLATE = """
                             pointBackgroundColor: pointColors,
                             pointBorderColor: '#fff',
                             pointBorderWidth: 2
+                        },
+                        {
+                            label: 'Smoothed Average',
+                            data: smoothedValues,
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.05)',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 0,
+                            hidden: !showSmoothed
                         }]
                     },
                     options: {
