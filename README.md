@@ -1,167 +1,167 @@
 # xDrip Dashboard
 
-Sistema di monitoraggio glicemia per xDrip+ con dashboard web interattiva e logging avanzato.
+Blood glucose monitoring system for xDrip+ with interactive web dashboard and advanced logging.
 
 ![Screenshot](1.png)
 
 ![Screenshot](2.png)
 
-## 📋 Funzionalità
+## 📋 Features
 
-### 🔄 Ricezione Dati xDrip (opzione "caricamento nel Cloud" -> "API Upload (REST)")
-- Endpoint REST API per ricevere dati glicemici da xDrip+
-- Salvataggio automatico nel database SQLite
-- Supporto entries (valori glicemia) e devicestatus (batteria)
-- Protezione con secret key
+### 🔄 xDrip Data Reception
+- REST API endpoint to receive glucose data from xDrip+
+- Automatic saving to SQLite database
+- Support for entries (glucose values) and devicestatus (battery)
+- Protected with secret key
 
-### 📊 Dashboard Web
-- **Grafico interattivo** con Chart.js
-  - Visualizzazione multi-periodo (4, 8, 12, 18, 24, 48 ore)
-  - Fascia target glicemica evidenziata (70-180 mg/dL)
-  - Punti colorati in base al range target
-  - Frecce direzionali per trend
+### 📊 Web Dashboard
+- **Interactive chart** with Chart.js
+  - Multi-period visualization (4, 8, 12, 18, 24, 48 hours)
+  - Highlighted target glucose range (70-180 mg/dL)
+  - Color-coded points based on target range
+  - Directional arrows for trends
   
-- **Statistiche in tempo reale**
-  - Valore corrente con delta
-  - Media periodo selezionato
-  - Livello batteria dispositivo
-  - Ultimo aggiornamento con tempo trascorso
+- **Real-time statistics**
+  - Current value with delta
+  - Average for selected period
+  - Device battery level
+  - Last update with time elapsed
 
-- **Display Grande**
-  - Visualizzazione a schermo intero
-  - Sfondo dinamico (verde in target, arancione fuori target)
-  - Ideale per monitor sempre accesi
+- **Large Display**
+  - Full screen visualization
+  - Dynamic background (green in target, orange out of range)
+  - Ideal for always-on monitors
 
-### 🔐 Sicurezza
-- Autenticazione con password per dashboard
-- Secret key per API xDrip
-- Sessioni Flask protette
+### 🔐 Security
+- Password authentication for dashboard
+- Secret key for xDrip API
+- Protected Flask sessions
 
 ### 📝 Logging
-- Rotazione automatica ogni 24 ore (mezzanotte)
-- Conservazione ultimi 30 giorni
-- Log su file e console
-- Tracciamento di:
-  - Avvio e chiusura applicazione
-  - Ricezione dati xDrip
-  - Errori ed eccezioni
-  - Tentativi di accesso non autorizzati
+- Automatic rotation every 24 hours (midnight)
+- Retention of last 30 days
+- Logs to file and console
+- Tracking of:
+  - Application start and shutdown
+  - xDrip data reception
+  - Errors and exceptions
+  - Unauthorized access attempts
 
-## 🚀 Installazione
+## 🚀 Installation
 
-### Requisiti
+### Requirements
 - Python 3.7+
 - SQLite3
 
-### Dipendenze
+### Dependencies
 ```bash
 pip install flask waitress
 ```
 
-### Configurazione
-Modifica le seguenti variabili all'inizio di `xdrip.py`: (dove UTENTE è il proprio utente)
+### Configuration
+Edit the following variables at the beginning of `xdrip.py`: (where USER is your username)
 
 ```python
-DB_PATH = Path("/home/UTENTE/xdrip/xdrip.db")  # Path database
-SECRET = "MIASECRET"  # Secret per API xDrip
-DASHBOARD_PASSWORD = "MIAPASSWORD"  # Password dashboard
-LOGS_DIR = Path("/home/UTENTE/xdrip/logs")  # Cartella log
-DASHBOARD_TITLE = "xDrip personale"  # Titolo personalizzato
-TARGET_MIN = 70  # Limite minimo target (mg/dL)
-TARGET_MAX = 180  # Limite massimo target (mg/dL)
+DB_PATH = Path("/home/USER/xdrip/xdrip.db")  # Database path
+SECRET = "MYSECRET"  # Secret for xDrip API
+DASHBOARD_PASSWORD = "MYPASSWORD"  # Dashboard password
+LOGS_DIR = Path("/home/USER/xdrip/logs")  # Logs folder
+DASHBOARD_TITLE = "My xDrip"  # Custom title
+TARGET_MIN = 70  # Minimum target limit (mg/dL)
+TARGET_MAX = 180  # Maximum target limit (mg/dL)
 ```
 
-## 💻 Utilizzo
+## 💻 Usage
 
-### Avvio Standard
+### Standard Start
 ```bash
 python3 xdrip.py
 ```
-Server in produzione su http://0.0.0.0:3000 (Waitress)
+Production server on http://0.0.0.0:3000 (Waitress)
 
-### Avvio in Background (Linux/Unix)
+### Background Start (Linux/Unix)
 ```bash
 python3 xdrip.py daemon
 ```
-- Processo in background che libera il terminale
-- PID salvato in `logs/xdrip.pid`
-- Log solo su file
+- Background process that frees the terminal
+- PID saved in `logs/xdrip.pid`
+- Logs to file only
 
-### Modalità Sviluppo
+### Development Mode
 ```bash
 python3 xdrip.py dev
 ```
 - Flask development server
-- Debug attivo
-- Auto-reload al cambio file
+- Debug active
+- Auto-reload on file changes
 
-### Controllo Processo Daemon
+### Daemon Process Control
 ```bash
-# Verifica se è attivo
+# Check if running
 ps aux | grep xdrip
 
-# Visualizza il PID
-cat /home/UTENTE/xdrip/logs/xdrip.pid
+# Display PID
+cat /home/USER/xdrip/logs/xdrip.pid
 
-# Ferma il processo
-kill $(cat /home/UTENTE/xdrip/logs/xdrip.pid)
+# Stop process
+kill $(cat /home/USER/xdrip/logs/xdrip.pid)
 
-# Visualizza log in tempo reale
-tail -f /home/UTENTE/xdrip/logs/xdrip.log
+# View logs in real-time
+tail -f /home/USER/xdrip/logs/xdrip.log
 ```
 
-## 🔧 Configurazione xDrip+
+## 🔧 xDrip+ Configuration
 
 ### Upload API
-1. Apri xDrip+ → Settings → Cloud Upload
-2. Abilita "REST API Upload"
-3. Imposta URL base: `http://TUO_SERVER:3000/xdrip/MIASECRET`
-4. Sostituisci `MIASECRET` con il tuo SECRET configurato
+1. Open xDrip+ → Settings → Cloud Upload
+2. Enable "REST API Upload"
+3. Set base URL: `http://YOUR_SERVER:3000/xdrip/MYSECRET`
+4. Replace `MYSECRET` with your configured SECRET
 
-### Endpoint API
+### API Endpoints
 - **Entries**: `POST /xdrip/<secret>/entries`
 - **Device Status**: `POST /xdrip/<secret>/devicestatus`
 
-## 🌐 Accesso Dashboard
+## 🌐 Dashboard Access
 
 ### Login
-`http://TUO_SERVER:3000/dashboard/login`
-- Username: nessuno
-- Password: configurata in `DASHBOARD_PASSWORD`
+`http://YOUR_SERVER:3000/dashboard/login`
+- Username: none
+- Password: configured in `DASHBOARD_PASSWORD`
 
-### Dashboard Principale
-`http://TUO_SERVER:3000/dashboard`
-- Grafico interattivo
-- Selezione periodo
-- Statistiche complete
+### Main Dashboard
+`http://YOUR_SERVER:3000/dashboard`
+- Interactive chart
+- Period selection
+- Complete statistics
 
-### Display Grande
-`http://TUO_SERVER:3000/dashboard/display`
-- Visualizzazione a schermo intero
-- Aggiornamento automatico ogni 30 secondi
-- Sfondo colorato in base al target
+### Large Display
+`http://YOUR_SERVER:3000/dashboard/display`
+- Full screen visualization
+- Automatic update every 30 seconds
+- Color-coded background based on target
 
 ### Logout
-`http://TUO_SERVER:3000/dashboard/logout`
+`http://YOUR_SERVER:3000/dashboard/logout`
 
-## 📁 Struttura File
+## 📁 File Structure
 
 ```
 xdripApi/
-├── xdrip.py          # Script principale
-├── README.md         # Questa documentazione
-└── [configurazione]
-    ├── xdrip.db      # Database SQLite (creato automaticamente)
+├── xdrip.py          # Main script
+├── README.md         # This documentation
+└── [configuration]
+    ├── xdrip.db      # SQLite database (automatically created)
     └── logs/
-        ├── xdrip.log       # Log corrente
-        ├── xdrip.log.2026-01-05  # Log precedenti
-        └── xdrip.pid       # PID processo daemon
+        ├── xdrip.log       # Current log
+        ├── xdrip.log.2026-01-05  # Previous logs
+        └── xdrip.pid       # Daemon process PID
 ```
 
 ## 🗄️ Database
 
-### Tabella `entries`
-Valori glicemici ricevuti da xDrip+
+### Table `entries`
+Glucose values received from xDrip+
 ```sql
 - id: INTEGER PRIMARY KEY
 - device: TEXT
@@ -172,8 +172,8 @@ Valori glicemici ricevuti da xDrip+
 - created_at: TIMESTAMP
 ```
 
-### Tabella `devicestatus`
-Stato dispositivo (batteria, etc.)
+### Table `devicestatus`
+Device status (battery, etc.)
 ```sql
 - id: INTEGER PRIMARY KEY
 - device: TEXT
@@ -183,98 +183,97 @@ Stato dispositivo (batteria, etc.)
 - created_at: TIMESTAMP
 ```
 
-## 📊 Aggiornamenti Automatici
+## 📊 Automatic Updates
 
-- **Dashboard**: ogni 60 secondi
-- **Display**: ogni 30 secondi
-- **Log rotation**: mezzanotte ogni giorno
+- **Dashboard**: every 60 seconds
+- **Display**: every 30 seconds
+- **Log rotation**: midnight every day
 
-## 🔍 Risoluzione Problemi
+## 🔍 Troubleshooting
 
-### Server non si avvia
+### Server won't start
 ```bash
-# Verifica che Waitress sia installato
+# Verify that Waitress is installed
 pip install waitress
 
-# Controlla i log
-cat /home/UTENTE/xdrip/logs/xdrip.log
+# Check logs
+cat /home/USER/xdrip/logs/xdrip.log
 ```
 
-### xDrip non invia dati
-1. Verifica URL e secret key
-2. Controlla che il server sia raggiungibile dalla rete
-3. Verifica i log per errori di autenticazione
+### xDrip not sending data
+1. Verify URL and secret key
+2. Check that server is reachable from network
+3. Check logs for authentication errors
 
-### Processo daemon non parte
+### Daemon process won't start
 ```bash
-# Solo Linux/Unix supporta daemon mode
-# Su Windows usa: pythonw xdrip.py
+# Only Linux/Unix supports daemon mode
+# On Windows use: pythonw xdrip.py
 ```
 
-### Errori di permessi
+### Permission errors
 ```bash
-# Assicurati che le cartelle siano scrivibili
-chmod -R 755 /home/UTENTE/xdrip
+# Make sure folders are writable
+chmod -R 755 /home/USER/xdrip
 ```
 
-## 🎨 Personalizzazione
+## 🎨 Customization
 
-### Modificare i colori della dashboard
-Modifica i CSS nei template `DASHBOARD_TEMPLATE` e `DISPLAY_TEMPLATE`
+### Change dashboard colors
+Edit CSS in the `DASHBOARD_TEMPLATE` and `DISPLAY_TEMPLATE` templates
 
-### Modificare intervalli di aggiornamento
+### Change update intervals
 ```javascript
-// Dashboard (default 60 secondi)
+// Dashboard (default 60 seconds)
 setInterval(() => { loadData(); }, 60000);
 
-// Display (default 30 secondi)
+// Display (default 30 seconds)
 setInterval(updateDisplay, 30000);
 ```
 
-### Aggiungere nuovi periodi di visualizzazione
-Modifica l'array in `get_data()`:
+### Add new visualization periods
+Edit the array in `get_data()`:
 ```python
-if hours not in [4, 8, 12, 18, 24, 48, 72]:  # Aggiunto 72 ore
+if hours not in [4, 8, 12, 18, 24, 48, 72]:  # Added 72 hours
 ```
 
-## 📝 Log
+## 📝 Logs
 
-I log includono:
-- `INFO`: Operazioni normali (avvio, ricezione dati, salvataggio)
-- `WARNING`: Tentativi di accesso non autorizzati
-- `ERROR`: Errori gestiti (DB, parsing JSON)
-- `CRITICAL`: Errori fatali
+Logs include:
+- `INFO`: Normal operations (start, data reception, saving)
+- `WARNING`: Unauthorized access attempts
+- `ERROR`: Handled errors (DB, JSON parsing)
+- `CRITICAL`: Fatal errors
 
-Formato log:
+Log format:
 ```
-2026-01-06 15:30:45 - INFO - Entry salvata: sgv=120, direction=Flat
-2026-01-06 15:31:00 - WARNING - Tentativo di accesso non autorizzato
+2026-01-06 15:30:45 - INFO - Entry saved: sgv=120, direction=Flat
+2026-01-06 15:31:00 - WARNING - Unauthorized access attempt
 ```
 
-## 🚦 Limiti Target
+## 🚦 Target Limits
 
-I limiti target glicemici sono configurabili:
+Target glucose limits are configurable:
 ```python
-TARGET_MIN = 70   # mg/dL - Limite inferiore
-TARGET_MAX = 180  # mg/dL - Limite superiore
+TARGET_MIN = 70   # mg/dL - Lower limit
+TARGET_MAX = 180  # mg/dL - Upper limit
 ```
 
-Valori dentro il range: **verde**  
-Valori fuori range: **arancione/rosso**
+Values in range: **green**  
+Values out of range: **orange/red**
 
-## 📞 Supporto
+## 📞 Support
 
-Per problemi o domande:
-1. Controlla i log: `tail -f logs/xdrip.log`
-2. Verifica la configurazione
-3. Testa gli endpoint API manualmente
+For issues or questions:
+1. Check logs: `tail -f logs/xdrip.log`
+2. Verify configuration
+3. Test API endpoints manually
 
-## 📄 Licenza
+## 📄 License
 
-Uso personale - Non per distribuzione commerciale
+Personal use - Not for commercial distribution
 
 ---
 
-**Versione**: 1.0  
-**Data**: Gennaio 2026
-
+**Version**: 1.0  
+**Date**: January 2026
