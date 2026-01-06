@@ -12,7 +12,7 @@ import os
 app = Flask(__name__)
 app.secret_key = "my_xdrip_secret_key_2026"  # Key for sessions
 
-DB_PATH = Path("/home/user/xdrip/xdrip.db")
+DB_PATH = Path("/home/matteo/xdrip/xdrip.db")
 SECRET = "mysecret"  # your secret in path: /xdrip/mysecret/...
 DASHBOARD_PASSWORD = "mypassword"  # Password to access dashboard
 
@@ -20,7 +20,7 @@ DASHBOARD_PASSWORD = "mypassword"  # Password to access dashboard
 LOGS_DIR = Path("/home/user/xdrip/logs")  # Logs folder path
 
 # Customizable title for dashboard
-DASHBOARD_TITLE = "dashboard"
+DASHBOARD_TITLE = "dashboarde"
 
 # Target glucose limits for chart
 TARGET_MIN = 70  # Minimum target limit (mg/dL)
@@ -907,6 +907,8 @@ DASHBOARD_TEMPLATE = """
                         scales: {
                             y: {
                                 beginAtZero: false,
+                                min: Math.min(TARGET_MIN - 20, Math.min(...values) - 10),
+                                max: Math.max(TARGET_MAX + 20, Math.max(...values) + 10),
                                 title: {
                                     display: true,
                                     text: 'Glucose (mg/dL)'
