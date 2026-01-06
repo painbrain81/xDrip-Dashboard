@@ -31,10 +31,34 @@ Blood glucose monitoring system for xDrip+ with interactive web dashboard and ad
   - Device battery level
   - Last update with time elapsed
 
+- **Advanced Statistics Page**
+  - Multiple time period analysis (24h, 3 days, 7 days, 30 days, all data)
+  - Complete glucose metrics:
+    - Average, median, standard deviation
+    - GMI (Glucose Management Indicator / estimated HbA1c)
+    - Coefficient of Variation (CV)
+    - Min/max values
+  - **Time In Range (TIR)** visualization
+    - Interactive bar chart with 5 segments
+    - Very Low (<54 mg/dL), Low (54-70), In Range (70-180), High (180-250), Very High (>250)
+    - Percentages and absolute counts
+  - **Time period analysis** (night, morning, afternoon, evening)
+    - Statistics by daily time slot
+    - Mini TIR charts for each period
+    - Period-specific averages and variability
+  - Default view: 7 days statistics
+
 - **Large Display**
   - Full screen visualization
   - Dynamic background (green in target, orange out of range)
   - Ideal for always-on monitors
+
+- **🌙 Dark Mode**
+  - Toggle button on all pages
+  - Preference saved in browser (localStorage)
+  - Smooth transitions between light/dark themes
+  - Optimized colors for night viewing
+  - Applies to dashboard, statistics, and all components
 
 ### 🔐 Security
 - Password authentication for dashboard
@@ -96,6 +120,8 @@ python3 xdrip.py background
 - Logs output only to file (not console)
 - Survives terminal closure
 - **Linux/Unix only** (requires fork support)
+
+**On Windows**: Use `pythonw xdrip.py` to run without console window
 
 ### Background Process Management
 ```bash
@@ -177,9 +203,19 @@ tail -f /home/USER/xdrip/logs/xdrip.log
 ### Main Dashboard
 `http://YOUR_SERVER:3000/dashboard`
 - Interactive chart
-- Period selection
+- Period selection (4h, 8h, 12h, 18h, 24h, 48h)
 - Complete statistics
 - Smoothed trend line toggle
+- Dark mode toggle
+
+### Statistics Page
+`http://YOUR_SERVER:3000/dashboard/statistics`
+- Comprehensive glucose analysis
+- Multiple period selection (24h, 3 days, 7 days, 30 days, all data)
+- Time In Range (TIR) visualization
+- Time period analysis (night, morning, afternoon, evening)
+- GMI and CV calculations
+- Dark mode support
 
 ### Large Display
 `http://YOUR_SERVER:3000/dashboard/display`
@@ -265,8 +301,25 @@ chmod -R 755 /home/USER/xdrip
 
 ## 🎨 Customization
 
+### Dark Mode
+Dark mode preference is automatically saved in browser's localStorage and persists across sessions. Toggle using the 🌙 Dark button available on:
+- Main Dashboard
+- Statistics Page
+
 ### Change dashboard colors
-Edit CSS in the `DASHBOARD_TEMPLATE` and `DISPLAY_TEMPLATE` templates
+Edit CSS in the `DASHBOARD_TEMPLATE`, `STATISTICS_TEMPLATE`, and `DISPLAY_TEMPLATE` templates
+
+Light mode colors:
+```css
+body { background: #f5f5f5; }
+.stat-card { background: white; }
+```
+
+Dark mode colors:
+```css
+body.dark-mode { background: #1a1a2e; }
+body.dark-mode .stat-card { background: #0f3460; }
+```
 
 ### Adjust smoothed line sensitivity
 In `calculateSmoothedLine()` function, modify the window size:
@@ -289,6 +342,26 @@ setInterval(updateDisplay, 30000);
 Edit the array in `get_data()`:
 ```python
 if hours not in [4, 8, 12, 18, 24, 48, 72]:  # Added 72 hours
+```
+
+And in statistics API routes, modify `get_stats()`, `get_all_stats()`, and `get_period_stats()` functions.
+
+### Customize Time In Range thresholds
+Edit constants in `calculate_statistics()`:
+```python
+TARGET_MIN = 70  # Lower target limit
+TARGET_MAX = 180  # Upper target limit
+VERY_LOW_THRESHOLD = 54  # Severe hypoglycemia
+VERY_HIGH_THRESHOLD = 250  # Severe hyperglycemia
+```
+
+### Modify time period analysis
+In `get_period_stats()`, customize daily time slots:
+```python
+'night': get_time_period_stats(data, 0, 6, 'Night (00:00-06:00)'),
+'morning': get_time_period_stats(data, 6, 12, 'Morning (06:00-12:00)'),
+'afternoon': get_time_period_stats(data, 12, 18, 'Afternoon (12:00-18:00)'),
+'evening': get_time_period_stats(data, 18, 24, 'Evening (18:00-24:00)')
 ```
 
 ## 📝 Logs
@@ -329,5 +402,5 @@ Personal use - Not for commercial distribution
 
 ---
 
-**Version**: 1.1  
-**Date**: January 2026
+**Version**: 2.0  
+**Date**: January 2026  
