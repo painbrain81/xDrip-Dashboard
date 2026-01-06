@@ -2,11 +2,11 @@
 
 Blood glucose monitoring system for xDrip+ with interactive web dashboard and advanced logging.
 
-![Screenshot](1.png)
+![Screenshot](11.png)
 
-![Screenshot](2.png)
+![Screenshot](22.png)
 
-![Screenshot](3.png)
+![Screenshot](33.png)
 
 ## 📋 Features
 
@@ -406,4 +406,5 @@ Personal use - Not for commercial distribution
 
 **Version**: 2.0  
 **Date**: January 2026  
+
 
