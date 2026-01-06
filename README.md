@@ -20,6 +20,10 @@ Blood glucose monitoring system for xDrip+ with interactive web dashboard and ad
   - Highlighted target glucose range (70-180 mg/dL)
   - Color-coded points based on target range
   - Directional arrows for trends
+  - **Smoothed trend line** using moving average
+    - Toggle on/off with checkbox
+    - Smooths fluctuations while following real trends
+    - Orange line for easy distinction
   
 - **Real-time statistics**
   - Current value with delta
@@ -82,10 +86,51 @@ Production server on http://0.0.0.0:3000 (Waitress)
 ### Background Start (Linux/Unix)
 ```bash
 python3 xdrip.py daemon
+# or
+python3 xdrip.py background
 ```
-- Background process that frees the terminal
+- Runs as a daemon process (detached from terminal)
+- Process runs in the background independently
+- Terminal is freed immediately after launch
 - PID saved in `logs/xdrip.pid`
-- Logs to file only
+- Logs output only to file (not console)
+- Survives terminal closure
+- **Linux/Unix only** (requires fork support)
+
+### Background Process Management
+```bash
+# Check if daemon is running
+ps aux | grep xdrip
+
+# View the process ID
+cat /home/USER/xdrip/logs/xdrip.pid
+
+# Stop the daemon
+kill $(cat /home/USER/xdrip/logs/xdrip.pid)
+
+# Gracefully stop with SIGTERM
+kill -15 $(cat /home/USER/xdrip/logs/xdrip.pid)
+
+# View logs in real-time
+tail -f /home/USER/xdrip/logs/xdrip.log
+
+# Start at system boot (systemd example)
+# Create /etc/systemd/system/xdrip.service
+[Unit]
+Description=xDrip Dashboard Service
+After=network.target
+
+[Service]
+Type=forking
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/xdrip
+ExecStart=/usr/bin/python3 /path/to/xdrip.py daemon
+PIDFile=/home/YOUR_USER/xdrip/logs/xdrip.pid
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ### Development Mode
 ```bash
@@ -134,6 +179,7 @@ tail -f /home/USER/xdrip/logs/xdrip.log
 - Interactive chart
 - Period selection
 - Complete statistics
+- Smoothed trend line toggle
 
 ### Large Display
 `http://YOUR_SERVER:3000/dashboard/display`
@@ -222,6 +268,14 @@ chmod -R 755 /home/USER/xdrip
 ### Change dashboard colors
 Edit CSS in the `DASHBOARD_TEMPLATE` and `DISPLAY_TEMPLATE` templates
 
+### Adjust smoothed line sensitivity
+In `calculateSmoothedLine()` function, modify the window size:
+```javascript
+const windowSize = 5; // Default: 5 points (2 before, current, 2 after)
+// Increase for more smoothing (e.g., 7 or 9)
+// Decrease for less smoothing (e.g., 3)
+```
+
 ### Change update intervals
 ```javascript
 // Dashboard (default 60 seconds)
@@ -275,5 +329,5 @@ Personal use - Not for commercial distribution
 
 ---
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Date**: January 2026
