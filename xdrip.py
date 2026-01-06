@@ -8,6 +8,7 @@ from logging.handlers import TimedRotatingFileHandler
 import sys
 import atexit
 import os
+import statistics
 
 app = Flask(__name__)
 app.secret_key = "my_xdrip_secret_key_2026"  # Key for sessions
@@ -20,7 +21,7 @@ DASHBOARD_PASSWORD = "MYPASSWORD"  # Password to access dashboard
 LOGS_DIR = Path("/home/USER/xdrip/logs")  # Logs folder path
 
 # Customizable title for dashboard
-DASHBOARD_TITLE = "MY DASHBOARD"
+DASHBOARD_TITLE = "My Dashboard"
 
 # Target glucose limits for chart
 TARGET_MIN = 70  # Minimum target limit (mg/dL)
@@ -209,6 +210,109 @@ def get_last_hours_data(hours=4):
     conn.close()
     
     return rows
+
+
+def calculate_statistics(data):
+    """Calculate statistics on glucose data"""
+    if not data:
+        return None
+    
+    sgv_values = [row[1] for row in data if row[1] is not None]
+    
+    if not sgv_values:
+        return None
+    
+    # Basic statistics
+    mean_glucose = statistics.mean(sgv_values)
+    median_glucose = statistics.median(sgv_values)
+    std_dev = statistics.stdev(sgv_values) if len(sgv_values) > 1 else 0
+    min_glucose = min(sgv_values)
+    max_glucose = max(sgv_values)
+    
+    # Count by range
+    in_range = sum(1 for v in sgv_values if TARGET_MIN <= v <= TARGET_MAX)
+    below_range = sum(1 for v in sgv_values if v < TARGET_MIN)
+    above_range = sum(1 for v in sgv_values if v > TARGET_MAX)
+    very_low = sum(1 for v in sgv_values if v < 54)  # Severe hypoglycemia
+    very_high = sum(1 for v in sgv_values if v > 250)  # Severe hyperglycemia
+    
+    total_readings = len(sgv_values)
+    
+    # Percentages
+    percent_in_range = (in_range / total_readings * 100) if total_readings > 0 else 0
+    percent_below = (below_range / total_readings * 100) if total_readings > 0 else 0
+    percent_above = (above_range / total_readings * 100) if total_readings > 0 else 0
+    percent_very_low = (very_low / total_readings * 100) if total_readings > 0 else 0
+    percent_very_high = (very_high / total_readings * 100) if total_readings > 0 else 0
+    
+    # Coefficient of Variation (CV) - glucose variability index
+    cv = (std_dev / mean_glucose * 100) if mean_glucose > 0 else 0
+    
+    # Calculate GMI (Glucose Management Indicator) - HbA1c estimate
+    # Formula: GMI = 3.31 + 0.02392 × mean_glucose
+    gmi = 3.31 + (0.02392 * mean_glucose)
+    
+    return {
+        'total_readings': total_readings,
+        'mean': round(mean_glucose, 1),
+        'median': round(median_glucose, 1),
+        'std_dev': round(std_dev, 1),
+        'cv': round(cv, 1),
+        'min': min_glucose,
+        'max': max_glucose,
+        'gmi': round(gmi, 2),
+        'in_range': in_range,
+        'below_range': below_range,
+        'above_range': above_range,
+        'very_low': very_low,
+        'very_high': very_high,
+        'percent_in_range': round(percent_in_range, 1),
+        'percent_below': round(percent_below, 1),
+        'percent_above': round(percent_above, 1),
+        'percent_very_low': round(percent_very_low, 1),
+        'percent_very_high': round(percent_very_high, 1)
+    }
+
+
+def get_time_period_stats(data, start_hour, end_hour, period_name):
+    """Calculate statistics for a specific time period of the day"""
+    filtered_data = []
+    for row in data:
+        timestamp_str = row[0]
+        if timestamp_str:
+            dt = datetime.fromisoformat(timestamp_str)
+            hour = dt.hour
+            if start_hour <= hour < end_hour:
+                filtered_data.append(row)
+    
+    stats = calculate_statistics(filtered_data)
+    if stats:
+        stats['period_name'] = period_name
+    return stats
+
+
+def get_all_data_from_db():
+    """Retrieve all data from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        c.execute(
+            """
+            SELECT timestamp_utc, sgv, direction
+            FROM entries
+            WHERE sgv IS NOT NULL
+            ORDER BY timestamp_utc ASC
+            """
+        )
+        
+        rows = c.fetchall()
+        conn.close()
+        
+        return rows
+    except Exception as e:
+        logger.error(f"Error retrieving complete data: {e}", exc_info=True)
+        return []
 
 
 def save_devicestatus_to_db(data: dict):
@@ -446,6 +550,96 @@ def get_battery():
     })
 
 
+@app.route("/dashboard/statistics")
+@login_required
+def statistics_dashboard():
+    """Statistics dashboard page"""
+    return render_template_string(STATISTICS_TEMPLATE,
+                                  target_min=TARGET_MIN,
+                                  target_max=TARGET_MAX,
+                                  title=DASHBOARD_TITLE)
+
+
+@app.route("/dashboard/api/stats/<int:hours>")
+@login_required
+def get_stats(hours):
+    """API to get statistics for a specific period"""
+    try:
+        data = get_last_hours_data(hours)
+        stats = calculate_statistics(data)
+        
+        if stats:
+            return jsonify({
+                'success': True,
+                'period_hours': hours,
+                'stats': stats
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No data available'
+            }), 404
+    except Exception as e:
+        logger.error(f"Error API stats: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route("/dashboard/api/stats/all")
+@login_required
+def get_all_stats():
+    """API to get complete statistics"""
+    try:
+        data = get_all_data_from_db()
+        stats = calculate_statistics(data)
+        
+        if stats:
+            return jsonify({
+                'success': True,
+                'stats': stats
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No data available'
+            }), 404
+    except Exception as e:
+        logger.error(f"Error API complete stats: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route("/dashboard/api/stats/periods")
+@login_required
+def get_period_stats():
+    """API to get statistics divided by time period of the day"""
+    try:
+        # Retrieve data from last 30 days
+        data = get_last_hours_data(hours=720)
+        
+        periods = {
+            'night': get_time_period_stats(data, 0, 6, 'Night (00:00-06:00)'),
+            'morning': get_time_period_stats(data, 6, 12, 'Morning (06:00-12:00)'),
+            'afternoon': get_time_period_stats(data, 12, 18, 'Afternoon (12:00-18:00)'),
+            'evening': get_time_period_stats(data, 18, 24, 'Evening (18:00-24:00)')
+        }
+        
+        return jsonify({
+            'success': True,
+            'periods': periods
+        })
+    except Exception as e:
+        logger.error(f"Error API period stats: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route("/dashboard/display")
 @login_required
 def display():
@@ -555,6 +749,36 @@ DASHBOARD_TEMPLATE = """
             margin: 0;
             padding: 20px;
             background: #f5f5f5;
+            transition: background 0.3s, color 0.3s;
+        }
+        body.dark-mode {
+            background: #1a1a2e;
+            color: #eee;
+        }
+        body.dark-mode .header {
+            background: #16213e !important;
+        }
+        body.dark-mode .stat-card,
+        body.dark-mode .chart-container {
+            background: #0f3460 !important;
+            color: #eee;
+        }
+        body.dark-mode .stat-label {
+            color: #aaa !important;
+        }
+        body.dark-mode .stat-value {
+            color: #667eea !important;
+        }
+        body.dark-mode h1 {
+            color: #eee !important;
+        }
+        body.dark-mode .time-selector label {
+            color: #ccc !important;
+        }
+        body.dark-mode .time-selector select {
+            background: #16213e;
+            color: #eee;
+            border-color: #555;
         }
         .header {
             display: flex;
@@ -661,6 +885,35 @@ DASHBOARD_TEMPLATE = """
             padding: 50px;
             color: #999;
         }
+        body.dark-mode {
+            background: #1a1a2e;
+            color: #eee;
+        }
+        body.dark-mode .header {
+            background: #16213e !important;
+        }
+        body.dark-mode .stat-card,
+        body.dark-mode .chart-container {
+            background: #0f3460 !important;
+            color: #eee;
+        }
+        body.dark-mode .stat-label {
+            color: #aaa !important;
+        }
+        body.dark-mode .stat-value {
+            color: #667eea !important;
+        }
+        body.dark-mode h1 {
+            color: #eee !important;
+        }
+        body.dark-mode .time-selector label {
+            color: #ccc !important;
+        }
+        body.dark-mode .time-selector select {
+            background: #16213e;
+            color: #eee;
+            border-color: #555;
+        }
     </style>
 </head>
 <body>
@@ -686,6 +939,8 @@ DASHBOARD_TEMPLATE = """
             </div>
         </div>
         <div style="display: flex; gap: 10px;">
+            <button onclick="toggleDarkMode()" class="display-btn" style="border: none; cursor: pointer;">🌙 Dark</button>
+            <a href="/dashboard/statistics" class="display-btn">Statistics</a>
             <a href="/dashboard/display" class="display-btn">Large Display</a>
             <a href="/dashboard/logout" class="logout-btn">Logout</a>
         </div>
@@ -722,6 +977,46 @@ DASHBOARD_TEMPLATE = """
         let chart = null;
         let currentHours = 4;
         let showSmoothed = true;
+        
+        // Dark mode functions
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
+            
+            // Update chart colors if chart exists
+            if (chart) {
+                updateChartColors(isDark);
+            }
+        }
+        
+        function updateChartColors(isDark) {
+            if (!chart) return;
+            
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)';
+            const textColor = isDark ? '#eee' : '#666';
+            
+            chart.options.scales.y.grid.color = function(context) {
+                const value = context.tick.value;
+                if (value >= TARGET_MIN && value <= TARGET_MAX) {
+                    return isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.1)';
+                }
+                return gridColor;
+            };
+            chart.options.scales.x.grid.color = gridColor;
+            chart.options.scales.y.ticks.color = textColor;
+            chart.options.scales.x.ticks.color = textColor;
+            chart.options.scales.y.title.color = textColor;
+            chart.options.scales.x.title.color = textColor;
+            chart.options.plugins.legend.labels.color = textColor;
+            
+            chart.update();
+        }
+        
+        // Check for saved dark mode preference
+        if (localStorage.getItem('darkMode') === 'enabled') {
+            document.body.classList.add('dark-mode');
+        }
         
         // Function to calculate smoothed line using moving average
         function calculateSmoothedLine(values) {
@@ -921,6 +1216,10 @@ DASHBOARD_TEMPLATE = """
                     chart.destroy();
                 }
                 
+                const isDark = document.body.classList.contains('dark-mode');
+                const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)';
+                const textColor = isDark ? '#eee' : '#666';
+                
                 chart = new Chart(ctx, {
                     type: 'line',
                     data: {
@@ -958,7 +1257,10 @@ DASHBOARD_TEMPLATE = """
                         plugins: {
                             legend: {
                                 display: true,
-                                position: 'top'
+                                position: 'top',
+                                labels: {
+                                    color: textColor
+                                }
                             },
                             tooltip: {
                                 mode: 'index',
@@ -976,19 +1278,23 @@ DASHBOARD_TEMPLATE = """
                                 beginAtZero: false,
                                 min: Math.min(TARGET_MIN - 20, Math.min(...values) - 10),
                                 max: Math.max(TARGET_MAX + 20, Math.max(...values) + 10),
-                                title: {
-                                    display: true,
-                                    text: 'Glucose (mg/dL)'
-                                },
                                 grid: {
                                     color: function(context) {
                                         // Highlight target range with light green background
                                         const value = context.tick.value;
                                         if (value >= TARGET_MIN && value <= TARGET_MAX) {
-                                            return 'rgba(16, 185, 129, 0.1)';
+                                            return isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.1)';
                                         }
-                                        return 'rgba(0, 0, 0, 0.05)';
+                                        return gridColor;
                                     }
+                                },
+                                ticks: {
+                                    color: textColor
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Glucose (mg/dL)',
+                                    color: textColor
                                 },
                                 afterBuildTicks: function(axis) {
                                     // Ensure target limits are visible as ticks
@@ -1005,10 +1311,14 @@ DASHBOARD_TEMPLATE = """
                             x: {
                                 title: {
                                     display: true,
-                                    text: 'Time'
+                                    text: 'Time',
+                                    color: textColor
                                 },
                                 grid: {
-                                    color: 'rgba(0, 0, 0, 0.05)'
+                                    color: gridColor
+                                },
+                                ticks: {
+                                    color: textColor
                                 }
                             }
                         },
@@ -1226,6 +1536,574 @@ DISPLAY_TEMPLATE = """
         
         // Update every 30 seconds
         setInterval(updateDisplay, 30000);
+    </script>
+</body>
+</html>
+"""
+
+STATISTICS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Statistics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            padding: 20px;
+            transition: background 0.3s, color 0.3s;
+        }
+        body.dark-mode {
+            background-color: #1a1a2e;
+            color: #eee;
+        }
+        body.dark-mode .header {
+            background: linear-gradient(135deg, #4a5ba8 0%, #5a3d7a 100%) !important;
+        }
+        body.dark-mode .period-selector,
+        body.dark-mode .stat-card,
+        body.dark-mode .range-card,
+        body.dark-mode .period-card {
+            background: #0f3460 !important;
+            color: #eee;
+        }
+        body.dark-mode .stat-label,
+        body.dark-mode .period-stat-label,
+        body.dark-mode .period-tir-label {
+            color: #aaa !important;
+        }
+        body.dark-mode .stat-value,
+        body.dark-mode .period-stat-value {
+            color: #eee !important;
+        }
+        body.dark-mode .range-card h2,
+        body.dark-mode .period-card h3,
+        body.dark-mode .period-selector h3 {
+            color: #eee !important;
+        }
+        body.dark-mode .period-btn {
+            background: #16213e;
+            color: #ccc;
+            border-color: #555;
+        }
+        body.dark-mode .period-btn:hover {
+            background: #1f2f4f;
+        }
+        body.dark-mode .period-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        body.dark-mode .legend-text {
+            color: #ccc !important;
+        }
+        body.dark-mode .period-stat {
+            border-bottom-color: #333 !important;
+        }
+        body.dark-mode .period-card h3 {
+            border-bottom-color: #333 !important;
+        }
+        body.dark-mode .period-tir-chart {
+            border-top-color: #333 !important;
+            border-bottom-color: #333 !important;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 32px;
+        }
+        .back-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 10px 20px;
+            border: 2px solid white;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .back-btn:hover {
+            background: white;
+            color: #667eea;
+        }
+        .period-selector {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .period-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .period-btn {
+            padding: 12px 24px;
+            background: #f0f0f0;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .period-btn:hover {
+            background: #e0e0e0;
+        }
+        .period-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-label {
+            color: #777;
+            font-size: 14px;
+            margin-bottom: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #333;
+        }
+        .stat-unit {
+            font-size: 18px;
+            color: #999;
+            margin-left: 5px;
+        }
+        .stat-subtext {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #999;
+        }
+        .range-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .range-card h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .range-bar {
+            display: flex;
+            height: 40px;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .range-segment {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            transition: flex 0.5s;
+        }
+        .range-very-low {
+            background-color: #dc3545;
+        }
+        .range-low {
+            background-color: #ffc107;
+        }
+        .range-normal {
+            background-color: #28a745;
+        }
+        .range-high {
+            background-color: #ff9800;
+        }
+        .range-very-high {
+            background-color: #dc3545;
+        }
+        .range-legend {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        .legend-text {
+            font-size: 14px;
+            color: #555;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-size: 18px;
+        }
+        .error {
+            background-color: #fee;
+            color: #c33;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .periods-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .period-card {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .period-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        .period-stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .period-stat:last-child {
+            border-bottom: none;
+        }
+        .period-stat-label {
+            color: #777;
+            font-size: 14px;
+        }
+        .period-stat-value {
+            font-weight: 600;
+            color: #333;
+        }
+        .period-tir-chart {
+            margin: 15px 0;
+            padding: 10px 0;
+            border-top: 1px solid #f0f0f0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .period-tir-label {
+            font-size: 12px;
+            color: #777;
+            margin-bottom: 8px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .mini-tir-bar {
+            display: flex;
+            height: 25px;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .mini-tir-segment {
+            transition: flex 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 {{ title }} - Statistics</h1>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="toggleDarkMode()" class="back-btn" style="border: none; cursor: pointer;">🌙 Dark</button>
+            <a href="/dashboard" class="back-btn">← Dashboard</a>
+        </div>
+    </div>
+
+    <div class="period-selector">
+        <h3 style="margin-bottom: 15px; color: #333;">Select Period:</h3>
+        <div class="period-buttons">
+            <button class="period-btn" onclick="loadStats(24, event)">24 Hours</button>
+            <button class="period-btn" onclick="loadStats(72, event)">3 Days</button>
+            <button class="period-btn active" onclick="loadStats(168, event)">7 Days</button>
+            <button class="period-btn" onclick="loadStats(720, event)">30 Days</button>
+            <button class="period-btn" onclick="loadAllStats(event)">All</button>
+            <button class="period-btn" onclick="loadPeriodStats(event)">By Time Periods</button>
+        </div>
+    </div>
+
+    <div id="content">
+        <div class="loading">Loading statistics...</div>
+    </div>
+
+    <script>
+        let currentView = 'stats';
+        
+        // Dark mode functions
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('darkMode', isDark ? 'enabled' : 'disabled');
+        }
+        
+        // Check for saved dark mode preference
+        if (localStorage.getItem('darkMode') === 'enabled') {
+            document.body.classList.add('dark-mode');
+        }
+
+        function setActiveButton(button) {
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (button) {
+                button.classList.add('active');
+            }
+        }
+
+        async function loadStats(hours, evt) {
+            currentView = 'stats';
+            
+            let button = null;
+            if (evt && evt.target) {
+                button = evt.target;
+            } else {
+                const buttons = document.querySelectorAll('.period-btn');
+                for (let btn of buttons) {
+                    const onclick = btn.getAttribute('onclick');
+                    if (onclick && onclick.includes('loadStats(' + hours)) {
+                        button = btn;
+                        break;
+                    }
+                }
+            }
+            
+            setActiveButton(button);
+
+            document.getElementById('content').innerHTML = '<div class="loading">Loading statistics...</div>';
+
+            try {
+                const response = await fetch(`/dashboard/api/stats/${hours}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    displayStats(data.stats, hours + ' hours');
+                } else {
+                    document.getElementById('content').innerHTML = `<div class="error">${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('content').innerHTML = `<div class="error">Loading error: ${error.message}</div>`;
+            }
+        }
+
+        async function loadAllStats(evt) {
+            currentView = 'stats';
+            const button = evt ? evt.target : null;
+            setActiveButton(button);
+
+            document.getElementById('content').innerHTML = '<div class="loading">Loading complete statistics...</div>';
+
+            try {
+                const response = await fetch('/dashboard/api/stats/all');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayStats(data.stats, 'all data');
+                } else {
+                    document.getElementById('content').innerHTML = `<div class="error">${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('content').innerHTML = `<div class="error">Loading error: ${error.message}</div>`;
+            }
+        }
+
+        async function loadPeriodStats(evt) {
+            currentView = 'periods';
+            const button = evt ? evt.target : null;
+            setActiveButton(button);
+
+            document.getElementById('content').innerHTML = '<div class="loading">Loading time period statistics...</div>';
+
+            try {
+                const response = await fetch('/dashboard/api/stats/periods');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayPeriodStats(data.periods);
+                } else {
+                    document.getElementById('content').innerHTML = `<div class="error">${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('content').innerHTML = `<div class="error">Loading error: ${error.message}</div>`;
+            }
+        }
+
+        function displayStats(stats, period) {
+            const html = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Average Glucose</div>
+                        <div class="stat-value">${stats.mean}<span class="stat-unit">mg/dL</span></div>
+                        <div class="stat-subtext">Median: ${stats.median} mg/dL</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">GMI (Estimated HbA1c)</div>
+                        <div class="stat-value">${stats.gmi}<span class="stat-unit">%</span></div>
+                        <div class="stat-subtext">Glucose Management Indicator</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Standard Deviation</div>
+                        <div class="stat-value">${stats.std_dev}<span class="stat-unit">mg/dL</span></div>
+                        <div class="stat-subtext">CV: ${stats.cv}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Range</div>
+                        <div class="stat-value">${stats.min} - ${stats.max}</div>
+                        <div class="stat-subtext">${stats.total_readings} readings</div>
+                    </div>
+                </div>
+
+                <div class="range-card">
+                    <h2>Time In Range (TIR) - Period: ${period}</h2>
+                    <div class="range-bar">
+                        <div class="range-segment range-very-low" style="flex: ${stats.percent_very_low}">
+                            ${stats.percent_very_low > 5 ? stats.percent_very_low.toFixed(1) + '%' : ''}
+                        </div>
+                        <div class="range-segment range-low" style="flex: ${stats.percent_below - stats.percent_very_low}">
+                            ${(stats.percent_below - stats.percent_very_low) > 5 ? (stats.percent_below - stats.percent_very_low).toFixed(1) + '%' : ''}
+                        </div>
+                        <div class="range-segment range-normal" style="flex: ${stats.percent_in_range}">
+                            ${stats.percent_in_range > 5 ? stats.percent_in_range.toFixed(1) + '%' : ''}
+                        </div>
+                        <div class="range-segment range-high" style="flex: ${stats.percent_above - stats.percent_very_high}">
+                            ${(stats.percent_above - stats.percent_very_high) > 5 ? (stats.percent_above - stats.percent_very_high).toFixed(1) + '%' : ''}
+                        </div>
+                        <div class="range-segment range-very-high" style="flex: ${stats.percent_very_high}">
+                            ${stats.percent_very_high > 5 ? stats.percent_very_high.toFixed(1) + '%' : ''}
+                        </div>
+                    </div>
+                    <div class="range-legend">
+                        <div class="legend-item">
+                            <div class="legend-color range-very-low"></div>
+                            <div class="legend-text">Very Low (&lt;54): ${stats.percent_very_low.toFixed(1)}% (${stats.very_low})</div>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color range-low"></div>
+                            <div class="legend-text">Low (54-70): ${(stats.percent_below - stats.percent_very_low).toFixed(1)}% (${stats.below_range - stats.very_low})</div>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color range-normal"></div>
+                            <div class="legend-text">In Range (70-180): ${stats.percent_in_range.toFixed(1)}% (${stats.in_range})</div>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color range-high"></div>
+                            <div class="legend-text">High (180-250): ${(stats.percent_above - stats.percent_very_high).toFixed(1)}% (${stats.above_range - stats.very_high})</div>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color range-very-high"></div>
+                            <div class="legend-text">Very High (&gt;250): ${stats.percent_very_high.toFixed(1)}% (${stats.very_high})</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function displayPeriodStats(periods) {
+            let html = '<div class="periods-grid">';
+
+            for (const [key, stats] of Object.entries(periods)) {
+                if (stats && stats.total_readings > 0) {
+                    const lowPercent = stats.percent_below - stats.percent_very_low;
+                    const highPercent = stats.percent_above - stats.percent_very_high;
+                    
+                    html += `
+                        <div class="period-card">
+                            <h3>${stats.period_name}</h3>
+                            <div class="period-stat">
+                                <span class="period-stat-label">Readings:</span>
+                                <span class="period-stat-value">${stats.total_readings}</span>
+                            </div>
+                            <div class="period-stat">
+                                <span class="period-stat-label">Average:</span>
+                                <span class="period-stat-value">${stats.mean} mg/dL</span>
+                            </div>
+                            
+                            <div class="period-tir-chart">
+                                <div class="period-tir-label">Time In Range</div>
+                                <div class="mini-tir-bar">
+                                    <div class="mini-tir-segment range-very-low" style="flex: ${stats.percent_very_low}" title="Very Low: ${stats.percent_very_low.toFixed(1)}%"></div>
+                                    <div class="mini-tir-segment range-low" style="flex: ${lowPercent}" title="Low: ${lowPercent.toFixed(1)}%"></div>
+                                    <div class="mini-tir-segment range-normal" style="flex: ${stats.percent_in_range}" title="In Range: ${stats.percent_in_range.toFixed(1)}%"></div>
+                                    <div class="mini-tir-segment range-high" style="flex: ${highPercent}" title="High: ${highPercent.toFixed(1)}%"></div>
+                                    <div class="mini-tir-segment range-very-high" style="flex: ${stats.percent_very_high}" title="Very High: ${stats.percent_very_high.toFixed(1)}%"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="period-stat">
+                                <span class="period-stat-label">In Range:</span>
+                                <span class="period-stat-value">${stats.percent_in_range}%</span>
+                            </div>
+                            <div class="period-stat">
+                                <span class="period-stat-label">Below:</span>
+                                <span class="period-stat-value">${stats.percent_below}%</span>
+                            </div>
+                            <div class="period-stat">
+                                <span class="period-stat-label">Above:</span>
+                                <span class="period-stat-value">${stats.percent_above}%</span>
+                            </div>
+                            <div class="period-stat">
+                                <span class="period-stat-label">Std Dev:</span>
+                                <span class="period-stat-value">${stats.std_dev} mg/dL</span>
+                            </div>
+                            <div class="period-stat">
+                                <span class="period-stat-label">CV:</span>
+                                <span class="period-stat-value">${stats.cv}%</span>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            html += '</div>';
+            document.getElementById('content').innerHTML = html;
+        }
+
+        // Load default statistics on startup
+        window.onload = () => {
+            loadStats(168);
+        };
     </script>
 </body>
 </html>
