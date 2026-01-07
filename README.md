@@ -499,7 +499,8 @@ Personal use - Not for commercial distribution
 
 ---
 
-**Version**: 2.2  
-**Date**: January 2026  
+**Version**: 3  
+**Date**: 7 January 2026  
+
 
 
