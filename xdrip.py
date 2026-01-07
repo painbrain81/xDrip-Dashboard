@@ -21,11 +21,35 @@ DASHBOARD_PASSWORD = "MYPASSWORD"  # Password to access dashboard
 LOGS_DIR = Path("/home/USER/xdrip/logs")  # Logs folder path
 
 # Customizable title for dashboard
-DASHBOARD_TITLE = "My Dashboard"
+DASHBOARD_TITLE = "MY DASHBOARD"
+
+# xDrip data unit configuration
+# ================================
+# IMPORTANT: Set this to match the unit configuration in your xDrip app
+# 
+# To check xDrip configuration:
+# 1. Open xDrip app
+# 2. Go to Settings > Less Common Settings > Extra Settings > Glucose Units
+# 
+# Set XDRIP_UNIT to:
+# - "mg/dl" if xDrip shows glucose in mg/dL (default, most common)
+# - "mmol/L" if xDrip shows glucose in mmol/L (common in Europe)
+# 
+# The system will automatically convert incoming data to mg/dL for storage,
+# and you can still view data in either unit in the dashboard.
+XDRIP_UNIT = "mg/dl"  # Options: "mg/dl" or "mmol/L"
 
 # Target glucose limits for chart
 TARGET_MIN = 70  # Minimum target limit (mg/dL)
 TARGET_MAX = 180  # Maximum target limit (mg/dL)
+TARGET_MIN_MMOL = 3.9  # Minimum target limit (mmol/L)
+TARGET_MAX_MMOL = 10.0  # Maximum target limit (mmol/L)
+
+# Severe hypoglycemia and hyperglycemia thresholds
+VERY_LOW_THRESHOLD = 54  # mg/dL - Severe hypoglycemia
+VERY_HIGH_THRESHOLD = 250  # mg/dL - Severe hyperglycemia
+VERY_LOW_THRESHOLD_MMOL = 3.0  # mmol/L - Severe hypoglycemia
+VERY_HIGH_THRESHOLD_MMOL = 13.9  # mmol/L - Severe hyperglycemia
 
 
 def setup_logging():
@@ -72,6 +96,10 @@ def setup_logging():
 
 # Initialize logger
 logger = setup_logging()
+
+# Login attempts tracking
+# Dictionary structure: {ip_address: {'attempts': count, 'blocked_until': datetime}}
+login_attempts = {}
 
 
 def log_shutdown():
@@ -175,6 +203,19 @@ def init_db():
 
 def check_secret_in_path(secret_from_path: str) -> bool:
     return secret_from_path == SECRET
+
+
+def convert_xdrip_value_to_mgdl(value):
+    """Convert glucose value from xDrip unit to mg/dL for database storage."""
+    if value is None:
+        return None
+    
+    if XDRIP_UNIT == "mmol/L":
+        # Convert mmol/L to mg/dL: mg/dL = mmol/L * 18.0
+        return round(float(value) * 18.0)
+    else:
+        # Already in mg/dL
+        return value
 
 
 def login_required(f):
@@ -347,8 +388,11 @@ def save_entry_to_db(entry: dict):
     """Save ONE xDrip entry to SQLite DB."""
     device = entry.get("device")
     date_ms = entry.get("date")
-    sgv = entry.get("sgv")
+    sgv_raw = entry.get("sgv")
     direction = entry.get("direction")
+    
+    # Convert glucose value to mg/dL if xDrip sends in mmol/L
+    sgv = convert_xdrip_value_to_mgdl(sgv_raw)
 
     # Convert ms epoch to datetime UTC ISO8601
     timestamp_utc = None
@@ -368,7 +412,11 @@ def save_entry_to_db(entry: dict):
             (device, date_ms, timestamp_utc, sgv, direction),
         )
         conn.commit()
-        logger.info(f"Entry saved: sgv={sgv}, direction={direction}, timestamp={timestamp_utc}")
+        log_msg = f"Entry saved: sgv={sgv} mg/dL"
+        if XDRIP_UNIT == "mmol/L" and sgv_raw is not None:
+            log_msg += f" (received: {sgv_raw} mmol/L)"
+        log_msg += f", direction={direction}, timestamp={timestamp_utc}"
+        logger.info(log_msg)
     except sqlite3.IntegrityError:
         # Ignore duplicates (same date_ms already present)
         logger.debug(f"Duplicate entry ignored: date_ms={date_ms}")
@@ -434,13 +482,53 @@ def index():
 
 @app.route("/dashboard/login", methods=["GET", "POST"])
 def login():
+    client_ip = request.remote_addr
+    
+    # Check if IP is currently blocked
+    if client_ip in login_attempts:
+        blocked_until = login_attempts[client_ip].get('blocked_until')
+        if blocked_until and datetime.now(timezone.utc) < blocked_until:
+            remaining_time = (blocked_until - datetime.now(timezone.utc)).total_seconds()
+            remaining_minutes = int(remaining_time / 60) + 1
+            logger.warning(f"Login blocked for IP {client_ip}. Remaining time: {remaining_minutes} minutes")
+            return render_template_string(LOGIN_TEMPLATE, 
+                                        error=f"Too many failed attempts. Try again in {remaining_minutes} minute(s).", 
+                                        title=DASHBOARD_TITLE)
+        elif blocked_until and datetime.now(timezone.utc) >= blocked_until:
+            # Block period expired, reset attempts
+            login_attempts.pop(client_ip, None)
+    
     if request.method == "POST":
         password = request.form.get("password")
         if password == DASHBOARD_PASSWORD:
+            # Successful login - reset attempts for this IP
+            login_attempts.pop(client_ip, None)
             session['logged_in'] = True
+            logger.info(f"Successful login from IP {client_ip}")
             return redirect(url_for('dashboard'))
         else:
-            return render_template_string(LOGIN_TEMPLATE, error="Incorrect password", title=DASHBOARD_TITLE)
+            # Failed login attempt
+            if client_ip not in login_attempts:
+                login_attempts[client_ip] = {'attempts': 0, 'blocked_until': None}
+            
+            login_attempts[client_ip]['attempts'] += 1
+            attempts = login_attempts[client_ip]['attempts']
+            
+            logger.warning(f"Failed login attempt from IP {client_ip}. Total attempts: {attempts}")
+            
+            if attempts >= 3:
+                # Block for 10 minutes
+                block_duration = timedelta(minutes=10)
+                login_attempts[client_ip]['blocked_until'] = datetime.now(timezone.utc) + block_duration
+                logger.warning(f"IP {client_ip} blocked for 10 minutes after {attempts} failed attempts")
+                return render_template_string(LOGIN_TEMPLATE, 
+                                            error="Too many failed attempts. Access blocked for 10 minutes.", 
+                                            title=DASHBOARD_TITLE)
+            else:
+                remaining_attempts = 3 - attempts
+                return render_template_string(LOGIN_TEMPLATE, 
+                                            error=f"Incorrect password. {remaining_attempts} attempt(s) remaining.", 
+                                            title=DASHBOARD_TITLE)
     
     return render_template_string(LOGIN_TEMPLATE, error=None, title=DASHBOARD_TITLE)
 
@@ -457,6 +545,8 @@ def dashboard():
     return render_template_string(DASHBOARD_TEMPLATE, 
                                   target_min=TARGET_MIN, 
                                   target_max=TARGET_MAX,
+                                  target_min_mmol=TARGET_MIN_MMOL,
+                                  target_max_mmol=TARGET_MAX_MMOL,
                                   title=DASHBOARD_TITLE)
 
 
@@ -557,6 +647,8 @@ def statistics_dashboard():
     return render_template_string(STATISTICS_TEMPLATE,
                                   target_min=TARGET_MIN,
                                   target_max=TARGET_MAX,
+                                  target_min_mmol=TARGET_MIN_MMOL,
+                                  target_max_mmol=TARGET_MAX_MMOL,
                                   title=DASHBOARD_TITLE)
 
 
@@ -646,8 +738,10 @@ def display():
     """Large display page for glucose visualization"""
     return render_template_string(DISPLAY_TEMPLATE,
                                   target_min=TARGET_MIN,
-                                  title=DASHBOARD_TITLE,
-                                  target_max=TARGET_MAX)
+                                  target_max=TARGET_MAX,
+                                  target_min_mmol=TARGET_MIN_MMOL,
+                                  target_max_mmol=TARGET_MAX_MMOL,
+                                  title=DASHBOARD_TITLE)
 
 
 # --- TEMPLATES ---
@@ -940,6 +1034,7 @@ DASHBOARD_TEMPLATE = """
         </div>
         <div style="display: flex; gap: 10px;">
             <button onclick="toggleDarkMode()" class="display-btn" style="border: none; cursor: pointer;">🌙 Dark</button>
+            <button onclick="toggleUnit()" class="display-btn" style="border: none; cursor: pointer;" id="unitToggleBtn">📊 mmol/L</button>
             <a href="/dashboard/statistics" class="display-btn">Statistics</a>
             <a href="/dashboard/display" class="display-btn">Large Display</a>
             <a href="/dashboard/logout" class="logout-btn">Logout</a>
@@ -974,9 +1069,48 @@ DASHBOARD_TEMPLATE = """
     <script>
         const TARGET_MIN = {{ target_min }};
         const TARGET_MAX = {{ target_max }};
+        const TARGET_MIN_MMOL = {{ target_min_mmol }};
+        const TARGET_MAX_MMOL = {{ target_max_mmol }};
         let chart = null;
         let currentHours = 4;
         let showSmoothed = true;
+        let currentUnit = 'mg/dl'; // 'mg/dl' or 'mmol/L'
+        
+        // Conversion functions
+        function mgdlToMmol(mgdl) {
+            return (mgdl / 18.0).toFixed(1);
+        }
+        
+        function getTargetMinConverted() {
+            return currentUnit === 'mmol/L' ? TARGET_MIN_MMOL : TARGET_MIN;
+        }
+        
+        function getTargetMaxConverted() {
+            return currentUnit === 'mmol/L' ? TARGET_MAX_MMOL : TARGET_MAX;
+        }
+        
+        function convertValue(value) {
+            if (currentUnit === 'mmol/L') {
+                return parseFloat(mgdlToMmol(value));
+            }
+            return Math.round(value);
+        }
+        
+        function getUnitLabel() {
+            return currentUnit === 'mmol/L' ? 'mmol/L' : 'mg/dL';
+        }
+        
+        function toggleUnit() {
+            currentUnit = currentUnit === 'mg/dl' ? 'mmol/L' : 'mg/dl';
+            localStorage.setItem('glucoseUnit', currentUnit);
+            
+            // Update button text
+            const btn = document.getElementById('unitToggleBtn');
+            btn.textContent = currentUnit === 'mg/dl' ? '📊 mmol/L' : '📊 mg/dL';
+            
+            // Reload data to update display
+            loadData();
+        }
         
         // Dark mode functions
         function toggleDarkMode() {
@@ -1066,8 +1200,8 @@ DASHBOARD_TEMPLATE = """
                 const { ctx, chartArea: { top, bottom, left, right }, scales: { y } } = chart;
                 
                 // Calculate Y positions for target limits
-                const yMin = y.getPixelForValue(TARGET_MIN);
-                const yMax = y.getPixelForValue(TARGET_MAX);
+                const yMin = y.getPixelForValue(getTargetMinConverted());
+                const yMax = y.getPixelForValue(getTargetMaxConverted());
                 
                 // Draw light green rectangle
                 ctx.save();
@@ -1184,13 +1318,17 @@ DASHBOARD_TEMPLATE = """
                 document.title = `${lastReading.value} ${arrow} (${deltaDisplay}) - {{ title }}`;
                 
                 // Update statistics cards
-                document.getElementById('current-value').textContent = `${lastReading.value} (${deltaDisplay})`;
+                const currentValueConverted = convertValue(lastReading.value);
+                const deltaConverted = currentUnit === 'mmol/L' ? parseFloat(mgdlToMmol(Math.abs(delta))) : Math.round(Math.abs(delta));
+                const deltaSign = delta >= 0 ? '+' : '-';
+                const deltaDisplayConverted = `${deltaSign}${deltaConverted}`;
+                
+                document.getElementById('current-value').textContent = `${currentValueConverted} ${getUnitLabel()} (${deltaDisplayConverted})`;
                 document.getElementById('current-direction').textContent = arrow;
                 
-                const avgValue = Math.round(
-                    data.reduce((sum, d) => sum + d.value, 0) / data.length
-                );
-                document.getElementById('avg-value').textContent = avgValue;
+                const avgValue = data.reduce((sum, d) => sum + d.value, 0) / data.length;
+                const avgConverted = convertValue(avgValue);
+                document.getElementById('avg-value').textContent = `${avgConverted} ${getUnitLabel()}`;
                 
                 const formattedTime = formatTime(lastReading.timestamp);
                 const timeAgo = getTimeAgo(lastReading.timestamp);
@@ -1199,11 +1337,12 @@ DASHBOARD_TEMPLATE = """
                 
                 // Prepare data for chart
                 const labels = data.map(d => formatTime(d.timestamp));
-                const values = data.map(d => d.value);
+                const rawValues = data.map(d => d.value);
+                const values = rawValues.map(v => currentUnit === 'mmol/L' ? parseFloat(mgdlToMmol(v)) : v);
                 
-                // Color points based on target range
+                // Color points based on target range (using current unit values)
                 const pointColors = values.map(v => 
-                    (v >= TARGET_MIN && v <= TARGET_MAX) ? '#10b981' : '#f97316'
+                    (v >= getTargetMinConverted() && v <= getTargetMaxConverted()) ? '#10b981' : '#f97316'
                 );
                 
                 // Calculate smoothed line using moving average
@@ -1225,7 +1364,7 @@ DASHBOARD_TEMPLATE = """
                     data: {
                         labels: labels,
                         datasets: [{
-                            label: 'Glucose (mg/dL)',
+                            label: `Glucose (${getUnitLabel()})`,
                             data: values,
                             borderColor: '#667eea',
                             backgroundColor: 'rgba(102, 126, 234, 0.1)',
@@ -1276,13 +1415,19 @@ DASHBOARD_TEMPLATE = """
                         scales: {
                             y: {
                                 beginAtZero: false,
-                                min: Math.min(TARGET_MIN - 20, Math.min(...values) - 10),
-                                max: Math.max(TARGET_MAX + 20, Math.max(...values) + 10),
+                                min: currentUnit === 'mmol/L' 
+                                    ? Math.min(getTargetMinConverted() - 1, Math.min(...values) - 0.5)
+                                    : Math.min(TARGET_MIN - 20, Math.min(...values) - 10),
+                                max: currentUnit === 'mmol/L'
+                                    ? Math.max(getTargetMaxConverted() + 1, Math.max(...values) + 0.5)
+                                    : Math.max(TARGET_MAX + 20, Math.max(...values) + 10),
                                 grid: {
                                     color: function(context) {
                                         // Highlight target range with light green background
                                         const value = context.tick.value;
-                                        if (value >= TARGET_MIN && value <= TARGET_MAX) {
+                                        const targetMin = getTargetMinConverted();
+                                        const targetMax = getTargetMaxConverted();
+                                        if (value >= targetMin && value <= targetMax) {
                                             return isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.1)';
                                         }
                                         return gridColor;
@@ -1293,17 +1438,19 @@ DASHBOARD_TEMPLATE = """
                                 },
                                 title: {
                                     display: true,
-                                    text: 'Glucose (mg/dL)',
+                                    text: `Glucose (${getUnitLabel()})`,
                                     color: textColor
                                 },
                                 afterBuildTicks: function(axis) {
                                     // Ensure target limits are visible as ticks
                                     const ticks = axis.ticks;
-                                    if (!ticks.find(t => t.value === TARGET_MIN)) {
-                                        ticks.push({ value: TARGET_MIN });
+                                    const targetMin = getTargetMinConverted();
+                                    const targetMax = getTargetMaxConverted();
+                                    if (!ticks.find(t => t.value === targetMin)) {
+                                        ticks.push({ value: targetMin });
                                     }
-                                    if (!ticks.find(t => t.value === TARGET_MAX)) {
-                                        ticks.push({ value: TARGET_MAX });
+                                    if (!ticks.find(t => t.value === targetMax)) {
+                                        ticks.push({ value: targetMax });
                                     }
                                     ticks.sort((a, b) => a.value - b.value);
                                 }
@@ -1335,6 +1482,15 @@ DASHBOARD_TEMPLATE = """
                 console.error('Error loading data:', error);
                 document.querySelector('.chart-container').innerHTML = 
                     '<div class="loading">Error loading data</div>';
+            }
+        }
+        
+        // Check for saved unit preference
+        if (localStorage.getItem('glucoseUnit')) {
+            currentUnit = localStorage.getItem('glucoseUnit');
+            const btn = document.getElementById('unitToggleBtn');
+            if (btn) {
+                btn.textContent = currentUnit === 'mg/dl' ? '📊 mmol/L' : '📊 mg/dL';
             }
         }
         
@@ -1449,6 +1605,38 @@ DISPLAY_TEMPLATE = """
     <script>
         const TARGET_MIN = {{ target_min }};
         const TARGET_MAX = {{ target_max }};
+        const TARGET_MIN_MMOL = {{ target_min_mmol }};
+        const TARGET_MAX_MMOL = {{ target_max_mmol }};
+        let currentUnit = 'mg/dl'; // 'mg/dl' or 'mmol/L'
+        
+        // Conversion functions
+        function mgdlToMmol(mgdl) {
+            return (mgdl / 18.0).toFixed(1);
+        }
+        
+        function convertValue(value) {
+            if (currentUnit === 'mmol/L') {
+                return parseFloat(mgdlToMmol(value));
+            }
+            return Math.round(value);
+        }
+        
+        function getUnitLabel() {
+            return currentUnit === 'mmol/L' ? 'mmol/L' : 'mg/dL';
+        }
+        
+        function getTargetMinConverted() {
+            return currentUnit === 'mmol/L' ? TARGET_MIN_MMOL : TARGET_MIN;
+        }
+        
+        function getTargetMaxConverted() {
+            return currentUnit === 'mmol/L' ? TARGET_MAX_MMOL : TARGET_MAX;
+        }
+        
+        function checkInRange(value) {
+            const convertedValue = currentUnit === 'mmol/L' ? parseFloat(mgdlToMmol(value)) : value;
+            return convertedValue >= getTargetMinConverted() && convertedValue <= getTargetMaxConverted();
+        }
         
         function getDirectionArrow(direction) {
             const arrows = {
@@ -1506,17 +1694,22 @@ DISPLAY_TEMPLATE = """
                 
                 const data = await response.json();
                 
-                // Update background based on range
-                document.body.className = data.in_range ? 'in-range' : 'out-of-range';
+                // Update background based on range (using current unit)
+                const inRange = checkInRange(data.value);
+                document.body.className = inRange ? 'in-range' : 'out-of-range';
                 
                 // Build HTML for display
                 const arrow = getDirectionArrow(data.direction);
-                const deltaDisplay = data.delta >= 0 ? `+${data.delta}` : data.delta;
+                const valueConverted = convertValue(data.value);
+                const deltaConverted = currentUnit === 'mmol/L' ? parseFloat(mgdlToMmol(Math.abs(data.delta))) : Math.round(Math.abs(data.delta));
+                const deltaSign = data.delta >= 0 ? '+' : '-';
+                const deltaDisplay = `${deltaSign}${deltaConverted}`;
                 const timestamp = formatTimestamp(data.timestamp);
                 const timeAgo = getTimeAgo(data.timestamp);
+                const unitLabel = getUnitLabel();
                 
                 document.getElementById('content').innerHTML = `
-                    <div class="glucose-value">${data.value}</div>
+                    <div class="glucose-value">${valueConverted} <span style="font-size: 80px; opacity: 0.8;">${unitLabel}</span></div>
                     <div class="trend-info">
                         <span class="arrow">${arrow}</span>
                         <span class="delta">${deltaDisplay}</span>
@@ -1529,6 +1722,11 @@ DISPLAY_TEMPLATE = """
                 document.getElementById('content').innerHTML = 
                     '<div class="error">Error: ' + error.message + '</div>';
             }
+        }
+        
+        // Check for saved unit preference
+        if (localStorage.getItem('glucoseUnit')) {
+            currentUnit = localStorage.getItem('glucoseUnit');
         }
         
         // Load initial data
@@ -1847,6 +2045,7 @@ STATISTICS_TEMPLATE = """
         <h1>📊 {{ title }} - Statistics</h1>
         <div style="display: flex; gap: 10px;">
             <button onclick="toggleDarkMode()" class="back-btn" style="border: none; cursor: pointer;">🌙 Dark</button>
+            <button onclick="toggleUnit()" class="back-btn" style="border: none; cursor: pointer;" id="unitToggleBtn">📊 mmol/L</button>
             <a href="/dashboard" class="back-btn">← Dashboard</a>
         </div>
     </div>
@@ -1869,6 +2068,51 @@ STATISTICS_TEMPLATE = """
 
     <script>
         let currentView = 'stats';
+        let currentUnit = 'mg/dl'; // 'mg/dl' or 'mmol/L'
+        
+        // Conversion functions
+        function mgdlToMmol(mgdl) {
+            return (mgdl / 18.0).toFixed(1);
+        }
+        
+        function convertValue(value) {
+            if (currentUnit === 'mmol/L') {
+                return parseFloat(mgdlToMmol(value));
+            }
+            return Math.round(value);
+        }
+        
+        function getUnitLabel() {
+            return currentUnit === 'mmol/L' ? 'mmol/L' : 'mg/dL';
+        }
+        
+        function toggleUnit() {
+            currentUnit = currentUnit === 'mg/dl' ? 'mmol/L' : 'mg/dl';
+            localStorage.setItem('glucoseUnit', currentUnit);
+            
+            // Update button text
+            const btn = document.getElementById('unitToggleBtn');
+            btn.textContent = currentUnit === 'mg/dl' ? '📊 mmol/L' : '📊 mg/dL';
+            
+            // Reload current view
+            if (currentView === 'stats') {
+                // Find active button and reload
+                const activeBtn = document.querySelector('.period-btn.active');
+                if (activeBtn) {
+                    const onclick = activeBtn.getAttribute('onclick');
+                    if (onclick.includes('loadAllStats')) {
+                        loadAllStats();
+                    } else {
+                        const match = onclick.match(/loadStats\((\d+)/);
+                        if (match) {
+                            loadStats(parseInt(match[1]));
+                        }
+                    }
+                }
+            } else if (currentView === 'periods') {
+                loadPeriodStats();
+            }
+        }
         
         // Dark mode functions
         function toggleDarkMode() {
@@ -1880,6 +2124,15 @@ STATISTICS_TEMPLATE = """
         // Check for saved dark mode preference
         if (localStorage.getItem('darkMode') === 'enabled') {
             document.body.classList.add('dark-mode');
+        }
+        
+        // Check for saved unit preference
+        if (localStorage.getItem('glucoseUnit')) {
+            currentUnit = localStorage.getItem('glucoseUnit');
+            const btn = document.getElementById('unitToggleBtn');
+            if (btn) {
+                btn.textContent = currentUnit === 'mg/dl' ? '📊 mmol/L' : '📊 mg/dL';
+            }
         }
 
         function setActiveButton(button) {
@@ -1969,12 +2222,19 @@ STATISTICS_TEMPLATE = """
         }
 
         function displayStats(stats, period) {
+            const unitLabel = getUnitLabel();
+            const meanConverted = convertValue(stats.mean);
+            const medianConverted = convertValue(stats.median);
+            const stdDevConverted = convertValue(stats.std_dev);
+            const minConverted = convertValue(stats.min);
+            const maxConverted = convertValue(stats.max);
+            
             const html = `
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-label">Average Glucose</div>
-                        <div class="stat-value">${stats.mean}<span class="stat-unit">mg/dL</span></div>
-                        <div class="stat-subtext">Median: ${stats.median} mg/dL</div>
+                        <div class="stat-value">${meanConverted}<span class="stat-unit">${unitLabel}</span></div>
+                        <div class="stat-subtext">Median: ${medianConverted} ${unitLabel}</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">GMI (Estimated HbA1c)</div>
@@ -1983,12 +2243,12 @@ STATISTICS_TEMPLATE = """
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Standard Deviation</div>
-                        <div class="stat-value">${stats.std_dev}<span class="stat-unit">mg/dL</span></div>
+                        <div class="stat-value">${stdDevConverted}<span class="stat-unit">${unitLabel}</span></div>
                         <div class="stat-subtext">CV: ${stats.cv}%</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Range</div>
-                        <div class="stat-value">${stats.min} - ${stats.max}</div>
+                        <div class="stat-value">${minConverted} - ${maxConverted}</div>
                         <div class="stat-subtext">${stats.total_readings} readings</div>
                     </div>
                 </div>
@@ -2057,7 +2317,7 @@ STATISTICS_TEMPLATE = """
                             </div>
                             <div class="period-stat">
                                 <span class="period-stat-label">Average:</span>
-                                <span class="period-stat-value">${stats.mean} mg/dL</span>
+                                <span class="period-stat-value">${convertValue(stats.mean)} ${getUnitLabel()}</span>
                             </div>
                             
                             <div class="period-tir-chart">
@@ -2085,7 +2345,7 @@ STATISTICS_TEMPLATE = """
                             </div>
                             <div class="period-stat">
                                 <span class="period-stat-label">Std Dev:</span>
-                                <span class="period-stat-value">${stats.std_dev} mg/dL</span>
+                                <span class="period-stat-value">${convertValue(stats.std_dev)} ${getUnitLabel()}</span>
                             </div>
                             <div class="period-stat">
                                 <span class="period-stat-label">CV:</span>
@@ -2098,6 +2358,15 @@ STATISTICS_TEMPLATE = """
 
             html += '</div>';
             document.getElementById('content').innerHTML = html;
+        }
+
+        // Check for saved unit preference
+        if (localStorage.getItem('glucoseUnit')) {
+            currentUnit = localStorage.getItem('glucoseUnit');
+            const btn = document.getElementById('unitToggleBtn');
+            if (btn) {
+                btn.textContent = currentUnit === 'mg/dl' ? '📊 mmol/L' : '📊 mg/dL';
+            }
         }
 
         // Load default statistics on startup
