@@ -12,6 +12,7 @@ import statistics
 
 app = Flask(__name__)
 app.secret_key = "my_xdrip_secret_key_2026"  # Key for sessions
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)  # Session duration: 30 days
 
 DB_PATH = Path("/home/USER/xdrip/xdrip.db")
 SECRET = "MYSECRET"  # your secret in path: /xdrip/MYSECRET/...
@@ -503,6 +504,7 @@ def login():
         if password == DASHBOARD_PASSWORD:
             # Successful login - reset attempts for this IP
             login_attempts.pop(client_ip, None)
+            session.permanent = True  # Keep session even after browser close
             session['logged_in'] = True
             logger.info(f"Successful login from IP {client_ip}")
             return redirect(url_for('dashboard'))
