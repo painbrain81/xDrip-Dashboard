@@ -2105,7 +2105,7 @@ STATISTICS_TEMPLATE = """
                     if (onclick.includes('loadAllStats')) {
                         loadAllStats();
                     } else {
-                        const match = onclick.match(/loadStats\((\d+)/);
+                        const match = onclick.match(/loadStats\\((\\d+)/);
                         if (match) {
                             loadStats(parseInt(match[1]));
                         }

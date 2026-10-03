@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Invalid escape sequence (`\(`) in the statistics page JavaScript regex, which triggered a Python `SyntaxWarning` at startup and will become an error in future Python versions
+
+## [3.1.0] - 2026-01-28
+
+### Added
+- **Persistent login session**
+  - Login is kept after closing the browser
+  - Session lifetime of 30 days (`PERMANENT_SESSION_LIFETIME`)
+
 ## [3.0.0] - 2026-01-07
 
 ### Added
