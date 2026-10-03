@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **Time-proportional glucose chart**
+  - Readings are placed on a real time axis, so a 10-minute gap takes twice the space of a 5-minute one
+  - The right edge of the chart is "now": the empty space after the last reading shows how long ago it arrived
+  - X axis ticks aligned to round local times, with the date shown at midnight
+
 ### Fixed
 - Invalid escape sequence (`\(`) in the statistics page JavaScript regex, which triggered a Python `SyntaxWarning` at startup and will become an error in future Python versions
 

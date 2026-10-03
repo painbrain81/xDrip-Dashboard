@@ -1240,13 +1240,49 @@ DASHBOARD_TEMPLATE = """
                 month: '2-digit'
             });
         }
-        
+
+        // Spacing between X axis ticks for each selectable range
+        function getTickStepMinutes(hours) {
+            if (hours <= 4) return 30;
+            if (hours <= 8) return 60;
+            if (hours <= 18) return 120;
+            if (hours <= 24) return 180;
+            return 360;
+        }
+
+        // Ticks aligned to round local times (e.g. 14:00, 14:30) between min and max
+        function buildTimeTicks(min, max, stepMin) {
+            const d = new Date(min);
+            d.setSeconds(0, 0);
+            const minutesOfDay = d.getHours() * 60 + d.getMinutes();
+            const first = Math.ceil(minutesOfDay / stepMin) * stepMin;
+            d.setHours(0, first, 0, 0);
+
+            const ticks = [];
+            while (d.getTime() <= max) {
+                if (d.getTime() >= min) {
+                    ticks.push({ value: d.getTime() });
+                }
+                d.setMinutes(d.getMinutes() + stepMin);
+            }
+            return ticks;
+        }
+
+        // Tick label: HH:MM, or the date at midnight
+        function formatTickTime(ms) {
+            const date = new Date(ms);
+            if (date.getHours() === 0 && date.getMinutes() === 0) {
+                return date.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+            }
+            return date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        }
+
         function getTimeAgo(isoString) {
             const date = new Date(isoString);
             const now = new Date();
             const diffMs = now - date;
             const diffMins = Math.floor(diffMs / 60000);
-            
+
             if (diffMins < 1) {
                 return 'ora';
             } else if (diffMins === 1) {
@@ -1337,18 +1373,24 @@ DASHBOARD_TEMPLATE = """
                 document.getElementById('last-update').innerHTML = 
                     `${formattedTime}<br><small style="font-size: 14px; opacity: 0.7;">${timeAgo}</small>`;
                 
-                // Prepare data for chart
-                const labels = data.map(d => formatTime(d.timestamp));
+                // Prepare data for chart: x is the real timestamp (ms), so spacing is proportional to time
+                const times = data.map(d => new Date(d.timestamp).getTime());
                 const rawValues = data.map(d => d.value);
                 const values = rawValues.map(v => currentUnit === 'mmol/L' ? parseFloat(mgdlToMmol(v)) : v);
-                
+
                 // Color points based on target range (using current unit values)
-                const pointColors = values.map(v => 
+                const pointColors = values.map(v =>
                     (v >= getTargetMinConverted() && v <= getTargetMaxConverted()) ? '#10b981' : '#f97316'
                 );
-                
+
                 // Calculate smoothed line using moving average
                 const smoothedValues = calculateSmoothedLine(values);
+
+                // X axis spans the selected range and ends at "now",
+                // so the gap after the last reading shows how long ago it arrived
+                const xMax = Date.now();
+                const xMin = xMax - currentHours * 3600 * 1000;
+                const tickStepMin = getTickStepMinutes(currentHours);
                 
                 // Create or update chart
                 const ctx = document.getElementById('glucoseChart').getContext('2d');
@@ -1364,10 +1406,9 @@ DASHBOARD_TEMPLATE = """
                 chart = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: labels,
                         datasets: [{
                             label: `Glucose (${getUnitLabel()})`,
-                            data: values,
+                            data: values.map((v, i) => ({ x: times[i], y: v })),
                             borderColor: '#667eea',
                             backgroundColor: 'rgba(102, 126, 234, 0.1)',
                             borderWidth: 3,
@@ -1381,7 +1422,7 @@ DASHBOARD_TEMPLATE = """
                         },
                         {
                             label: 'Smoothed Average',
-                            data: smoothedValues,
+                            data: smoothedValues.map((v, i) => ({ x: times[i], y: v })),
                             borderColor: '#f59e0b',
                             backgroundColor: 'rgba(245, 158, 11, 0.05)',
                             borderWidth: 3,
@@ -1407,6 +1448,9 @@ DASHBOARD_TEMPLATE = """
                                 mode: 'index',
                                 intersect: false,
                                 callbacks: {
+                                    title: function(items) {
+                                        return items.length ? formatTime(items[0].parsed.x) : '';
+                                    },
                                     afterLabel: function(context) {
                                         const index = context.dataIndex;
                                         return getDirectionArrow(data[index].direction);
@@ -1458,6 +1502,9 @@ DASHBOARD_TEMPLATE = """
                                 }
                             },
                             x: {
+                                type: 'linear',
+                                min: xMin,
+                                max: xMax,
                                 title: {
                                     display: true,
                                     text: 'Time',
@@ -1467,7 +1514,13 @@ DASHBOARD_TEMPLATE = """
                                     color: gridColor
                                 },
                                 ticks: {
-                                    color: textColor
+                                    color: textColor,
+                                    callback: function(value) {
+                                        return formatTickTime(value);
+                                    }
+                                },
+                                afterBuildTicks: function(axis) {
+                                    axis.ticks = buildTimeTicks(xMin, xMax, tickStepMin);
                                 }
                             }
                         },
